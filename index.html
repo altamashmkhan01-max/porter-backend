@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Porter</title>
+<style>
+:root{--bg:#F5F2EA;--card:#fff;--ink:#12303B;--mute:#5F7580;--line:#DDD8CB;--red:#D8352A}
+@media (prefers-color-scheme:dark){:root{--bg:#0C1A20;--card:#14262E;--ink:#EDEBE4;--mute:#8CA3AD;--line:#26404B}}
+*{box-sizing:border-box}body{margin:0 auto;max-width:640px;padding:16px 16px 150px;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif}
+h1{margin:6px 0 14px;font-size:30px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.p,.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px}
+.s{color:var(--mute);font-size:13px}.row{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+button{font:inherit;cursor:pointer}.add{border:1.5px solid var(--red);color:var(--red);background:none;border-radius:8px;padding:6px 12px;font-weight:700}
+.q button{width:30px;height:30px;border:0;border-radius:8px;background:var(--red);color:#fff;font-size:18px}
+.q{display:flex;gap:10px;align-items:center;font-weight:700}
+input{width:100%;font:inherit;padding:10px;margin-top:6px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px))}
+.bar>div{max-width:640px;margin:0 auto}.cta{width:100%;border:0;background:var(--red);color:#fff;font-weight:800;font-size:17px;padding:14px;border-radius:12px}
+.cta:disabled{opacity:.4}.eta{font-size:56px;font-weight:800}.err{color:var(--red);font-size:14px;margin-top:6px}
+</style></head><body>
+<h1>Porter</h1><div id="v"></div><div class="bar" id="bar"><div></div></div>
+<script>
+const $=s=>document.querySelector(s),m=c=>"$"+(c/100).toFixed(2);
+const LABEL={placed:"Order received",picking:"Being picked",ready:"Packed, waiting for rider",out_for_delivery:"On the way",delivered:"Delivered"};
+let products=[],cart={},order=null,err="",busy=false,addr={};
+const saved=localStorage.getItem("porter_order");
+async function load(){products=await (await fetch("/api/products")).json();
+ if(saved){const r=await fetch("/api/orders/"+saved);if(r.ok)order=await r.json()}render()}
+function q(id,d){const p=products.find(x=>x.id==id);const n=Math.max(0,Math.min(p.stock,(cart[id]||0)+d));n?cart[id]=n:delete cart[id];render()}
+const sub=()=>products.reduce((a,p)=>a+(cart[p.id]||0)*p.price_cents,0);
+async function place(){
+ addr={name:$("#nm").value,phone:$("#ph").value,address:$("#ad").value};
+ if(!addr.address.trim()){err="Please enter a delivery address.";return render()}
+ busy=true;err="";render();
+ const r=await fetch("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({customer_name:addr.name,phone:addr.phone,address:addr.address,items:Object.entries(cart).map(([product_id,qty])=>({product_id:+product_id,qty}))})});
+ const d=await r.json();busy=false;
+ if(!r.ok){err=d.error;await load();return}
+ order=d;cart={};localStorage.setItem("porter_order",d.id);await load();
+}
+function render(){
+ if(order){const t=new Date(order.created_at.replace(" ","T")+"Z").getTime();
+  $("#v").innerHTML=`<div class="card"><span class="s">Order #${order.id}</span>
+  <div class="eta" id="eta"></div><b>${LABEL[order.status]}</b>
+  <ul>${order.items.map(i=>`<li>${i.qty} × ${i.name}</li>`).join("")}</ul><b>Total ${m(order.total_cents)}</b></div>
+  <button class="add" onclick="order=null;localStorage.removeItem('porter_order');render()">New order</button>`;
+  $("#bar").style.display="none";clock(t);return}
+ $("#v").innerHTML=`<div class="grid">${products.map(p=>`<div class="p"><b>${p.name}</b><div class="s">${p.size}${p.stock<=3?` · only ${p.stock} left`:""}</div>
+ <div class="row"><b>${m(p.price_cents)}</b>${cart[p.id]?`<span class="q"><button aria-label="Remove one" onclick="q(${p.id},-1)">−</button>${cart[p.id]}<button aria-label="Add one" onclick="q(${p.id},1)">+</button></span>`:`<button class="add" onclick="q(${p.id},1)">Add</button>`}</div></div>`).join("")}</div>`;
+ const s=sub(),n=Object.keys(cart).length,fee=s?299+(s<3500?200:0):0,tot=Math.round((s+fee)*1.13);
+ $("#bar").style.display="block";
+ $("#bar").firstElementChild.innerHTML=n?`<input id="nm" placeholder="Name" value="${addr.name||""}"><input id="ph" placeholder="Phone" value="${addr.phone||""}"><input id="ad" placeholder="Delivery address" value="${addr.address||""}">
+ <div class="err">${err}</div><div class="row s"><span>Delivery ${m(fee)} + HST</span><b>${m(tot)}</b></div><button class="cta" ${busy?"disabled":""} onclick="place()">${busy?"Placing…":"Place order"}</button>`:`<div class="s">${err}</div><button class="cta" disabled>Add items</button>`;
+}
+let timer;function clock(t){clearInterval(timer);timer=setInterval(()=>{const e=$("#eta");if(!e||!order)return;
+ if(order.status=="delivered"){e.textContent="✓";return}const r=Math.max(0,720-Math.floor((Date.now()-t)/1000));e.textContent=Math.floor(r/60)+":"+String(r%60).padStart(2,"0")},1000)}
+const es=new EventSource("/api/events");
+es.addEventListener("order",e=>{const o=JSON.parse(e.data);if(order&&o.id==order.id){order=o;render()}else if(!order)load()});
+load();
+</script></body></html>

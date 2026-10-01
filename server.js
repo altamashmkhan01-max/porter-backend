@@ -4,7 +4,7 @@ const express = require("express");
 const Database = require("better-sqlite3");
 const app = express();
 app.use(express.json());
-app.use(express.static(__dirname + "/public"));
+app.use(express.static(__dirname));
 const db = new Database(process.env.DB || "porter.db");
 db.pragma("journal_mode = WAL");
 
